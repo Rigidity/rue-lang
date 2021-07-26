@@ -1,4 +1,4 @@
-import { Token, TokenType } from './lexer/Token';
+import { Token, TokenType } from './token';
 import { ErrorInfo, RueError, toPosition } from './utils';
 import util from 'util';
 
@@ -183,6 +183,9 @@ export function lex(source: string): Token[] {
 					break;
 				case 'class':
 					type = TokenType.ClassKeyword;
+					break;
+				case 'void':
+					type = TokenType.VoidType;
 					break;
 				case 'int':
 				case 'i8':

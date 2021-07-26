@@ -436,7 +436,8 @@ export function parse(source: Token[], text: string): Tree {
 			nextOf(TokenType.UnsignedIntegerType) ??
 			nextOf(TokenType.FloatType) ??
 			nextOf(TokenType.BooleanType) ??
-			nextOf(TokenType.StringType);
+			nextOf(TokenType.StringType) ??
+			nextOf(TokenType.VoidType);
 		if (!base) return popError({ message: 'Expected type or identifier' });
 		result.push(base);
 		while (true) {

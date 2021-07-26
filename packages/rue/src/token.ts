@@ -12,7 +12,7 @@ export enum TokenType {
 	HexadecimalLiteral, OctalLiteral, BinaryLiteral,
 
 	// Builtin types
-	StringType, BooleanType, IntegerType, UnsignedIntegerType, FloatType,
+	StringType, BooleanType, IntegerType, UnsignedIntegerType, FloatType, VoidType,
 
 	// Keywords and modifiers
 	ForKeyword, WhileKeyword, DoKeyword, ContinueKeyword, BreakKeyword,
