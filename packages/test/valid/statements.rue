@@ -1,0 +1,29 @@
+label: for (i in 0..10) {
+	continue label;
+}
+
+while (true) {
+	break;
+}
+
+do {
+
+} while(true);
+
+if (true) {
+
+} else {
+	
+}
+
+val a: char = 'a';
+
+def square(number: int): int {
+	return number * number;
+}
+
+match (something) {
+	0 => square(1);
+	1 => square(2);
+	square(3);
+}

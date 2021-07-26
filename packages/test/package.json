@@ -1,0 +1,13 @@
+{
+	"name": "ruetest",
+	"version": "1.0.0",
+	"main": "dist/index.js",
+	"scripts": {
+		"build": "rm -rf dist/* && tsc",
+		"watch": "tsc -w"
+	},
+	"license": "MIT",
+	"dependencies": {
+		"ruelang": "^1.0.0"
+	}
+}

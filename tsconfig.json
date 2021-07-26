@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"incremental": true,
+		"target": "ESNext",
+		"module": "CommonJS",
+		"declaration": true,
+		"strict": true,
+		"inlineSourceMap": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"downlevelIteration": true,
+		"forceConsistentCasingInFileNames": true
+	}
+}

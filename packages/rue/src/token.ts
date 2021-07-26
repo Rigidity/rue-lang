@@ -1,0 +1,46 @@
+export interface Token {
+	type: TokenType;
+	start: number;
+	stop: number;
+	text: string;
+}
+
+export enum TokenType {
+
+	// Literal values
+	StringLiteral, BoolLiteral, IntLiteral, FloatLiteral,
+	HexadecimalLiteral, OctalLiteral, BinaryLiteral,
+
+	// Builtin types
+	StringType, BooleanType, IntegerType, UnsignedIntegerType, FloatType,
+
+	// Keywords and modifiers
+	ForKeyword, WhileKeyword, DoKeyword, ContinueKeyword, BreakKeyword,
+	IfKeyword, ElseKeyword, MatchKeyword,
+	PublicKeyword, PrivateKeyword, ProtectedKeyword,
+	ThisKeyword, SuperKeyword, NullKeyword,
+	DefKeyword, ReturnKeyword,
+	AndKeyword, OrKeyword, NotKeyword,
+	IsKeyword, AsKeyword, InKeyword,
+	TryKeyword, CatchKeyword, ThrowKeyword,
+	ValKeyword, VarKeyword, Identifier,
+	ImportKeyword, ExportKeyword, FromKeyword,
+	TypeKeyword, EnumKeyword, ClassKeyword, StructKeyword, MacroKeyword,
+
+	// Operators and symbols
+	EqualOperator, NotEqualOperator,
+	PlusAssignOperator, MinusAssignOperator, TimesAssignOperator, DivideAssignOperator, ModuloAssignOperator,
+	AndAssignOperator, OrAssignOperator, XorAssignOperator, AssignOperator,
+	CoalesceAssignOperator, LeftShiftAssignOperator, RightShiftAssignOperator, UnsignedRightShiftAssignOperator,
+	PlusOperator, MinusOperator, TimesOperator, DivideOperator, ModuloOperator,
+	CoalesceOperator, LeftShiftOperator, RightShiftOperator, UnsignedRightShiftOperator,
+	AndOperator, OrOperator, XorOperator, NotOperator,
+	LessThanEqualOperator, GreaterThanEqualOperator, LessThanOperator, GreaterThanOperator,
+	InclusiveRangeOperator, ExclusiveRangeOperator, AccessOperator,
+	OptionalOperator, OptionalAccessOperator, ArrowOperator,
+
+	// Punctuators and grouping
+	OpenParenthesis, CloseParenthesis, OpenBracket, CloseBracket, OpenBrace, CloseBrace,
+	SemicolonPunctuator, ColonPunctuator, UnderscorePunctuator, CommaPunctuator
+
+}

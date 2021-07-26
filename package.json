@@ -1,0 +1,20 @@
+{
+	"private": true,
+	"name": "rue",
+	"version": "1.0.0",
+	"main": "dist/index.js",
+	"scripts": {
+		"watch": "lerna run watch --parallel"
+	},
+	"workspaces": ["packages/*"],
+	"repository": "https://github.com/Rigidity/Rue",
+	"license": "MIT",
+	"dependencies": {
+		"chalk": "^4.1.1"
+	},
+	"devDependencies": {
+		"@types/node": "^16.4.1",
+		"eslint": "^7.31.0",
+		"lerna": "^4.0.0"
+	}
+}
