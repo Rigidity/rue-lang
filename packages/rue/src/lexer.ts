@@ -22,6 +22,8 @@ export const keywords: Record<string, TokenType> = {
     try: TokenType.TryKeyword,
     catch: TokenType.CatchKeyword,
     throw: TokenType.ThrowKeyword,
+    finally: TokenType.FinallyKeyword,
+    defer: TokenType.DeferKeyword,
     def: TokenType.DefKeyword,
     val: TokenType.ValKeyword,
     var: TokenType.VarKeyword,

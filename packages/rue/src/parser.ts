@@ -1617,7 +1617,7 @@ export class Parser {
     public parseReferenceExpression(): Tree | undefined {
         this.push();
         const result = [];
-        const lhs = this.parseValue();
+        const lhs = this.parseLiteralValue();
         if (!lhs)
             return this.throw(
                 new ParserError(
@@ -1634,13 +1634,13 @@ export class Parser {
                 this.parsePropertyAccess() ??
                 this.parseOptionalPropertyAccess() ??
                 this.parseArrayIndex() ??
-                this.parseCall())
+                this.parseMethodCall())
         )
             result.push(match);
         return this.tree({ type: TreeType.ReferenceExpression, items: result });
     }
 
-    public parseValue(): Tree | undefined {
+    public parseLiteralValue(): Tree | undefined {
         this.push();
         const result = [];
         let value =
@@ -1688,7 +1688,7 @@ export class Parser {
                 );
         }
         result.push(value);
-        return this.tree({ type: TreeType.Value, items: result });
+        return this.tree({ type: TreeType.LiteralValue, items: result });
     }
 
     public parseCast(): Tree | undefined {
@@ -1723,7 +1723,7 @@ export class Parser {
                 )
             );
         result.push(type);
-        const value = this.parseValue();
+        const value = this.parseLiteralValue();
         if (!value)
             return this.throw(
                 new ParserError(
@@ -1734,7 +1734,7 @@ export class Parser {
                 )
             );
         result.push(value);
-        return this.tree({ type: TreeType.Cast, items: result });
+        return this.tree({ type: TreeType.TypeCast, items: result });
     }
 
     public parsePropertyAccess(): Tree | undefined {
@@ -1778,7 +1778,7 @@ export class Parser {
         let match =
             this.consume(TokenType.Identifier) ??
             this.parseArrayIndex() ??
-            this.parseCall();
+            this.parseMethodCall();
         if (!match)
             return this.throw(
                 new ParserError(
@@ -1830,7 +1830,7 @@ export class Parser {
         return this.tree({ type: TreeType.ArrayIndex, items: result });
     }
 
-    public parseCall(): Tree | undefined {
+    public parseMethodCall(): Tree | undefined {
         this.push();
         const result = [];
         if (!this.consume(TokenType.OpenParenthesis))
@@ -1845,7 +1845,7 @@ export class Parser {
         while (true) {
             if (result.length && !this.consume(TokenType.CommaPunctuator))
                 break;
-            const argument = this.parseCallArgument();
+            const argument = this.parseMethodCallArgument();
             if (!argument) {
                 if (!result.length) break;
                 return this.throw(
@@ -1868,7 +1868,7 @@ export class Parser {
                     this.stop()
                 )
             );
-        return this.tree({ type: TreeType.Call, items: result });
+        return this.tree({ type: TreeType.MethodCall, items: result });
     }
 
     public parseArrayInitializer(): Tree | undefined {
@@ -1929,7 +1929,7 @@ export class Parser {
         return this.tree({ type: TreeType.ArrayValue, items: result });
     }
 
-    public parseCallArgument(): Tree | undefined {
+    public parseMethodCallArgument(): Tree | undefined {
         this.push();
         const result = [];
         const argument = this.parseAssignmentExpression();
@@ -1943,6 +1943,6 @@ export class Parser {
                 )
             );
         result.push(argument);
-        return this.tree({ type: TreeType.CallArgument, items: result });
+        return this.tree({ type: TreeType.MethodCallArgument, items: result });
     }
 }
