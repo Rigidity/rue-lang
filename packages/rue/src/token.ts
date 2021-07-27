@@ -24,7 +24,7 @@ export enum TokenType {
 	IsKeyword, AsKeyword, InKeyword,
 	TryKeyword, CatchKeyword, ThrowKeyword,
 	ValKeyword, VarKeyword, Identifier,
-	ImportKeyword, ExportKeyword, FromKeyword,
+	ImportKeyword, ExportKeyword, FromKeyword, ExternKeyword,
 	TypeKeyword, EnumKeyword, ClassKeyword, StructKeyword, MacroKeyword,
 
 	// Operators and symbols

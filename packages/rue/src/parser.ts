@@ -1,1019 +1,1948 @@
 import { Token, TokenType } from './token';
 import { Tree, TreeType } from './tree';
-import { ErrorInfo, RueError, toPosition } from './utils';
-import util from 'util';
-
-export function parse(source: Token[], text: string): Tree {
-
-	const stack: Token[][] = [source.slice()];
-	let error: RueError | null = null;
-
-	const result = parseBody();
-	if (stack[0].length > 0) popError({
-		message: (token: Token) => `Unexpected token ${util.inspect(token.text)}`
-	}, false);
-
-	if (!result || stack[0].length) throw error;
-	return result;
-
-	function mutate<T>(original: T[], content: T[]): void {
-		original.length = 0;
-		for (const item of content) original.push(item);
-	}
-
-	function push(): Token[] {
-		const result = stack[stack.length - 1].slice();
-		stack.push(result);
-		return result;
-	}
-
-	function pop(success: boolean = true): undefined {
-		const tokens = stack.pop();
-		if (!tokens) throw new Error('There are no stack frames to pop.');
-		if (success) mutate(stack[stack.length - 1], tokens);
-		return;
-	}
-
-	function tokenStart(tokens: Token[]): number {
-		return tokens.length > 0 ?
-			tokens[0].start :
-			source.length > 0 ?
-				source[source.length - 1].start :
-				0;
-	}
-
-	function tokenStop(tokens: Token[]): number {
-		return tokens.length > 0 ?
-			tokens[0].stop :
-			source.length > 0 ?
-				source[source.length - 1].stop :
-				0;
-	}
-
-	function makeError(info: ErrorInfo<Token>): undefined {
-		const tokens = current();
-		const start = toPosition(tokenStart(tokens), text);
-		const stop = toPosition(tokenStop(tokens), text);
-		if (error === null || start.index >= error.start.index) {
-			error = new RueError(typeof info.message === 'string' ?
-				info.message :
-				info.message(source[source.length - tokens.length]), start, stop);
-		}
-		return;
-	}
-
-	function popError(info: ErrorInfo<Token>, exit: boolean = true): undefined {
-		makeError(info);
-		if (exit) pop(false);
-		return;
-	}
-
-	function current(): Token[] {
-		return stack[stack.length - 1];
-	}
-
-	function parent(): Token[] {
-		return stack[stack.length - 2];
-	}
-
-	function nextOf(type: TokenType): Token | undefined {
-		const tokens = current();
-		if (!tokens.length || tokens[0].type !== type) return;
-		return tokens.shift();
-	}
-
-	function makeTree(tree: Omit<Omit<Tree, 'start'>, 'stop'>): Tree {
-		const start = tokenStart(parent());
-		const stop = tokenStart(current());
-		return { ...tree, start, stop };
-	}
-
-	function popTree(tree: Omit<Omit<Tree, 'start'>, 'stop'>): Tree {
-		const result = makeTree(tree);
-		pop();
-		return result;
-	}
-
-	function parseBody(): Tree | undefined {
-		push();
-		const result = [];
-		while (true) {
-			const statement = parseStatement();
-			if (!statement) break;
-			result.push(statement);
-		}
-		return popTree({ type: TreeType.Body, items: result });
-	}
-
-	function parseStatement(): Tree | undefined {
-		push();
-		const result = [];
-		const statement = parseLabeledStatement() ??
-			parseFieldStatement() ??
-			parseExpressionStatement() ??
-			parseDefStatement() ??
-			parseIfStatement() ??
-			parseWhileStatement() ??
-			parseMatchStatement() ??
-			parseDoStatement() ??
-			parseForStatement() ??
-			parseReturnStatement() ??
-			parseContinueStatement() ??
-			parseBreakStatement() ??
-			parseBlockStatement() ??
-			parseEmptyStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		return popTree({ type: TreeType.Statement, items: result });
-	}
-
-	function parseLabeledStatement(): Tree | undefined {
-		push();
-		const result = [];
-		const identifier = nextOf(TokenType.Identifier);
-		if (!identifier) return popError({ message: 'Expected labeled statement' });
-		result.push(identifier);
-		if (!nextOf(TokenType.ColonPunctuator)) return popError({ message: 'Expected ":" after label' });
-		const statement = parseStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		return popTree({ type: TreeType.LabeledStatement, items: result });
-	}
-
-	function parseBlockStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenBrace)) return popError({ message: 'Expected block statement' });
-		while (true) {
-			const statement = parseStatement();
-			if (!statement) break;
-			result.push(statement);
-		}
-		if (!nextOf(TokenType.CloseBrace)) return popError({ message: 'Unterminated block statement' });
-		return popTree({ type: TreeType.BlockStatement, items: result });
-	}
-
-	function parseIfStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.IfKeyword)) return popError({ message: 'Expected if statement' });
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected if condition' });
-		const condition = parseExpressionSequence();
-		if (!condition) return popError({ message: 'Expected expression sequence' });
-		result.push(condition);
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated if condition' });
-		const statement = parseStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		if (nextOf(TokenType.ElseKeyword)) {
-			const statement = parseStatement();
-			if (!statement) return popError({ message: 'Expected statement' });
-			result.push(statement);
-		}
-		return popTree({ type: TreeType.IfStatement, items: result });
-	}
-
-	function parseWhileStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.WhileKeyword)) return popError({ message: 'Expected while statement' });
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected while condition' });
-		const condition = parseExpressionSequence();
-		if (!condition) return popError({ message: 'Expected expression sequence' });
-		result.push(condition);
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated while condition' });
-		const statement = parseStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		return popTree({ type: TreeType.WhileStatement, items: result });
-	}
-
-	function parseMatchStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.MatchKeyword)) return popError({ message: 'Expected match statement' });
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected match value' });
-		const value = parseExpressionSequence();
-		if (!value) return popError({ message: 'Expected expression sequence' });
-		result.push(value);
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated match value' });
-		if (!nextOf(TokenType.OpenBrace)) return popError({ message: 'Expected match body' });
-		let match = false;
-		while (true) {
-			const option = parseMatchOption();
-			if (!option) break;
-			match = false;
-			result.push(option);
-		}
-		const fallback = parseBody();
-		if (fallback) result.push(fallback);
-		else if (!match) return popError({ message: 'Expected match options or fallback' });
-		if (!nextOf(TokenType.CloseBrace)) return popError({ message: 'Unterminated match body' });
-		return popTree({ type: TreeType.MatchStatement, items: result });
-	}
-
-	function parseMatchOption(): Tree | undefined {
-		push();
-		const result = [];
-		const expression = parseAssignmentExpression();
-		if (!expression) return popError({ message: 'Expected match option' });
-		result.push(expression);
-		if (!nextOf(TokenType.ArrowOperator)) return popError({ message: 'Expected "=>"' });
-		const body = parseStatement();
-		if (!body) return popError({ message: 'Expected match option body' });
-		result.push(body);
-		return popTree({ type: TreeType.MatchOption, items: result });
-	}
-
-	function parseDefStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.DefKeyword)) return popError({ message: 'Expected def statement' });
-		const identifier = nextOf(TokenType.Identifier);
-		if (!identifier) return popError({ message: 'Expected identifier' });
-		result.push(identifier);
-		const parameters = parseParameters();
-		if (!parameters) return popError({ message: 'Expected parameters' });
-		result.push(parameters);
-		if (nextOf(TokenType.ColonPunctuator)) {
-			const type = parseUnaryType();
-			if (!type) return popError({ message: 'Expected type' });
-			result.push(type);
-		}
-		const statement = parseBlockStatement() ?? parseEmptyStatement();
-		if (!statement) return popError({ message: 'Expected def body' });
-		result.push(statement);
-		return popTree({ type: TreeType.DefStatement, items: result });
-	}
-
-	function parseParameters(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected parameters' });
-		while (true) {
-			if (result.length && !nextOf(TokenType.CommaPunctuator)) break;
-			const parameter = parseParameter();
-			if (!parameter) {
-				if (!result.length) break;
-				return popError({ message: 'Expected parameter' });
-			}
-			result.push(parameter);
-		}
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated parameters' });
-		return popTree({ type: TreeType.Parameters, items: result });
-	}
-
-	function parseParameter(): Tree | undefined {
-		push();
-		const result = [];
-		const item = nextOf(TokenType.Identifier) ?? nextOf(TokenType.InclusiveRangeOperator);
-		if (!item) return popError({ message: 'Expected parameter' });
-		result.push(item);
-		if (item.type === TokenType.Identifier) {
-			if (!nextOf(TokenType.ColonPunctuator)) return popError({ message: 'Expected ":" after parameter name' });
-			const type = parseUnaryType();
-			if (!type) return popError({ message: 'Expected type' });
-			result.push(type);
-		}
-		return popTree({ type: TreeType.Parameter, items: result });
-	}
-
-	function parseDoStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.DoKeyword)) return popError({ message: 'Expected do statement' });
-		const statement = parseStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		if (!nextOf(TokenType.WhileKeyword)) return popError({ message: 'Expected while clause' });
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected do condition' });
-		const condition = parseExpressionSequence();
-		if (!condition) return popError({ message: 'Expected expression sequence' });
-		result.push(condition);
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated while condition' });
-		return popTree({ type: TreeType.DoStatement, items: result });
-	}
-
-	function parseForStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.ForKeyword)) return popError({ message: 'Expected for statement' });
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected for iterator' });
-		const identifier = nextOf(TokenType.Identifier);
-		if (!identifier) return popError({ message: 'Expected identifier' });
-		result.push(identifier);
-		if (!nextOf(TokenType.InKeyword)) return popError({ message: 'Expected in clause' });
-		const expression = parseAssignmentExpression();
-		if (!expression) return popError({ message: 'Expected iterator expression' });
-		result.push(expression);
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated for iterator' });
-		const statement = parseStatement();
-		if (!statement) return popError({ message: 'Expected statement' });
-		result.push(statement);
-		return popTree({ type: TreeType.ForStatement, items: result });
-	}
-
-	function parseReturnStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.ReturnKeyword)) return popError({ message: 'Expected return statement' });
-		const value = parseExpressionSequence();
-		if (value) result.push(value);
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.ReturnStatement, items: result });
-	}
-
-	function parseContinueStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.ContinueKeyword)) return popError({ message: 'Expected continue statement' });
-		const identifier = nextOf(TokenType.Identifier);
-		if (identifier) result.push(identifier);
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.ContinueStatement, items: result });
-	}
-
-	function parseBreakStatement(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.BreakKeyword)) return popError({ message: 'Expected break statement' });
-		const identifier = nextOf(TokenType.Identifier);
-		if (identifier) result.push(identifier);
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.BreakStatement, items: result });
-	}
-
-	function parseEmptyStatement(): Tree | undefined {
-		push();
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.EmptyStatement, items: [] });
-	}
-
-	function parseExpressionStatement(): Tree | undefined {
-		push();
-		const result = [];
-		const expressions = parseExpressionSequence();
-		if (!expressions) return popError({ message: 'Expected expression sequence' });
-		result.push(expressions);
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.ExpressionStatement, items: result });
-	}
-
-	function parseFieldStatement(): Tree | undefined {
-		push();
-		const result = [];
-		const keyword = nextOf(TokenType.ValKeyword) ?? nextOf(TokenType.VarKeyword);
-		if (!keyword) return popError({ message: 'Expected field statement' });
-		result.push(keyword);
-		const identifier = nextOf(TokenType.Identifier);
-		if (!identifier) return popError({ message: 'Expected field name ' });
-		result.push(identifier);
-		if (nextOf(TokenType.ColonPunctuator)) {
-			const type = parseUnionType();
-			if (!type) return popError({ message: 'Expected field type' });
-			result.push(type);
-		}
-		if (nextOf(TokenType.AssignOperator)) {
-			const expression = parseAssignmentExpression();
-			if (!expression) return popError({ message: 'Expected expression' });
-			result.push(expression);
-		}
-		if (!nextOf(TokenType.SemicolonPunctuator)) return popError({ message: 'Expected semicolon' });
-		return popTree({ type: TreeType.FieldStatement, items: result });
-	}
-
-	function parseUnionType(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseIntersectionType();
-		if (!lhs) return popError({ message: 'Expected union type' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.OrOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseIntersectionType();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.UnionType, items: result });
-	}
-
-	function parseIntersectionType(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseUnaryType();
-		if (!lhs) return popError({ message: 'Expected intersection type' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.AndOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseUnaryType();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.IntersectionType, items: result });
-	}
-
-	function parseUnaryType(): Tree | undefined {
-		push();
-		const result = [];
-		const base = nextOf(TokenType.Identifier) ??
-			nextOf(TokenType.IntegerType) ??
-			nextOf(TokenType.UnsignedIntegerType) ??
-			nextOf(TokenType.FloatType) ??
-			nextOf(TokenType.BooleanType) ??
-			nextOf(TokenType.StringType) ??
-			nextOf(TokenType.VoidType);
-		if (!base) return popError({ message: 'Expected type or identifier' });
-		result.push(base);
-		while (true) {
-			const match = parseGenericType() ?? parseArrayType();
-			if (match) {
-				result.push(match);
-				continue;
-			}
-			const operator = nextOf(TokenType.TimesOperator) ?? nextOf(TokenType.OptionalOperator);
-			if (!operator) break;
-			result.push(operator);
-		}
-		return popTree({ type: TreeType.UnaryType, items: result });
-	}
-
-	function parseArrayType(): Tree | undefined {
-		push();
-		if (!nextOf(TokenType.OpenBracket)) return popError({ message: 'Expected array type modifier' });
-		if (!nextOf(TokenType.CloseBracket)) return popError({ message: 'Unterminated array type modifier' });
-		return popTree({ type: TreeType.ArrayType, items: [] });
-	}
-
-	function parseGenericType(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.LessThanOperator)) return popError({ message: 'Expected generic type arguments' });
-		const lhs = parseUnionType();
-		if (!lhs) return popError({ message: 'Expected generic type argument' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.CommaPunctuator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseUnionType();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		if (!nextOf(TokenType.GreaterThanOperator)) return popError({ message: 'Unterminated generic type arguments' });
-		return popTree({ type: TreeType.GenericType, items: result });
-	}
-
-	function parseExpressionSequence(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseAssignmentExpression();
-		if (!lhs) return popError({ message: 'Expected expression sequence' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.CommaPunctuator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseAssignmentExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.ExpressionSequence, items: result });
-	}
-
-	function parseAssignmentExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseTernaryExpression();
-		if (!lhs) return popError({ message: 'Expected assignment expression' });
-		result.push(lhs);
-		push();
-		const operator = nextOf(TokenType.PlusAssignOperator) ??
-			nextOf(TokenType.MinusAssignOperator) ??
-			nextOf(TokenType.TimesAssignOperator) ??
-			nextOf(TokenType.DivideAssignOperator) ??
-			nextOf(TokenType.ModuloAssignOperator) ??
-			nextOf(TokenType.AndAssignOperator) ??
-			nextOf(TokenType.OrAssignOperator) ??
-			nextOf(TokenType.XorAssignOperator) ??
-			nextOf(TokenType.CoalesceAssignOperator) ??
-			nextOf(TokenType.LeftShiftAssignOperator) ??
-			nextOf(TokenType.RightShiftAssignOperator) ??
-			nextOf(TokenType.UnsignedRightShiftAssignOperator) ??
-			nextOf(TokenType.AssignOperator);
-		if (operator) {
-			const rhs = parseTernaryExpression();
-			if (rhs) {
-				result.push(operator, rhs);
-				pop();
-			} else {
-				pop(false);
-			}
-		} else {
-			pop(false);
-		}
-		return popTree({ type: TreeType.AssignmentExpression, items: result });
-	}
-
-	function parseTernaryExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const condition = parseCoalesceExpression();
-		if (!condition) return popError({ message: 'Expected ternary expression' });
-		result.push(condition);
-		push();
-		ternary: if (nextOf(TokenType.OptionalOperator)) {
-			const lhs = parseAssignmentExpression();
-			if (!lhs) {
-				pop(false);
-				break ternary;
-			}
-			if (!nextOf(TokenType.ColonPunctuator)) {
-				pop(false);
-				break ternary;
-			}
-			const rhs = parseAssignmentExpression();
-			if (!rhs) {
-				pop(false);
-				break ternary;
-			}
-			result.push(lhs, rhs);
-			pop();
-		} else {
-			pop(false);
-		}
-		return popTree({ type: TreeType.TernaryExpression, items: result });
-	}
-
-	function parseCoalesceExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseLogicalOrExpression();
-		if (!lhs) return popError({ message: 'Expected coalesce expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.CoalesceOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseLogicalOrExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.CoalesceExpression, items: result });
-	}
-
-	function parseLogicalOrExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseLogicalAndExpression();
-		if (!lhs) return popError({ message: 'Expected logical or expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.OrKeyword)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseLogicalAndExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.LogicalOrExpression, items: result });
-	}
-
-	function parseLogicalAndExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseBitwiseOrExpression();
-		if (!lhs) return popError({ message: 'Expected logical and expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.AndKeyword)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseBitwiseOrExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.LogicalAndExpression, items: result });
-	}
-
-	function parseBitwiseOrExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseBitwiseXorExpression();
-		if (!lhs) return popError({ message: 'Expected bitwise or expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.OrOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseBitwiseXorExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.BitwiseOrExpression, items: result });
-	}
-
-	function parseBitwiseXorExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseBitwiseAndExpression();
-		if (!lhs) return popError({ message: 'Expected bitwise xor expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.XorOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseBitwiseAndExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.BitwiseXorExpression, items: result });
-	}
-
-	function parseBitwiseAndExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseEqualityExpression();
-		if (!lhs) return popError({ message: 'Expected bitwise and expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			if (!nextOf(TokenType.AndOperator)) {
-				pop(false);
-				break;
-			}
-			const rhs = parseEqualityExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.BitwiseAndExpression, items: result });
-	}
-
-	function parseEqualityExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseComparisonExpression();
-		if (!lhs) return popError({ message: 'Expected equality expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			const operator = nextOf(TokenType.EqualOperator) ?? nextOf(TokenType.NotEqualOperator);
-			if (!operator) {
-				pop(false);
-				break;
-			}
-			const rhs = parseComparisonExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(operator, rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.EqualityExpression, items: result });
-	}
-
-	function parseComparisonExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseShiftExpression();
-		if (!lhs) return popError({ message: 'Expected comparison expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			const operator = nextOf(TokenType.LessThanEqualOperator) ??
-				nextOf(TokenType.GreaterThanEqualOperator) ??
-				nextOf(TokenType.LessThanOperator) ??
-				nextOf(TokenType.GreaterThanOperator) ??
-				nextOf(TokenType.AsKeyword) ??
-				nextOf(TokenType.IsKeyword) ??
-				nextOf(TokenType.InKeyword);
-			if (!operator) {
-				pop(false);
-				break;
-			}
-			const rhs = operator.type === TokenType.AsKeyword || operator.type === TokenType.IsKeyword ?
-				parseUnaryType() :
-				parseShiftExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(operator, rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.ComparisonExpression, items: result });
-	}
-
-	function parseShiftExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseTermExpression();
-		if (!lhs) return popError({ message: 'Expected shift expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			const operator = nextOf(TokenType.LeftShiftOperator) ??
-				nextOf(TokenType.RightShiftOperator) ??
-				nextOf(TokenType.UnsignedRightShiftOperator)
-			if (!operator) {
-				pop(false);
-				break;
-			}
-			const rhs = parseTermExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(operator, rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.ShiftExpression, items: result });
-	}
-
-	function parseTermExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseFactorExpression();
-		if (!lhs) return popError({ message: 'Expected term expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			const operator = nextOf(TokenType.PlusOperator) ?? nextOf(TokenType.MinusOperator);
-			if (!operator) {
-				pop(false);
-				break;
-			}
-			result.push(operator);
-			const rhs = parseFactorExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.TermExpression, items: result });
-	}
-
-	function parseFactorExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseRangeExpression();
-		if (!lhs) return popError({ message: 'Expected factor expression' });
-		result.push(lhs);
-		while (true) {
-			push();
-			const operator = nextOf(TokenType.TimesOperator) ??
-				nextOf(TokenType.DivideOperator) ??
-				nextOf(TokenType.ModuloOperator);
-			if (!operator) {
-				pop(false);
-				break;
-			}
-			const rhs = parseRangeExpression();
-			if (!rhs) {
-				pop(false);
-				break;
-			}
-			result.push(operator, rhs);
-			pop();
-		}
-		return popTree({ type: TreeType.FactorExpression, items: result });
-	}
-
-	function parseRangeExpression(): Tree | undefined {
-		push();
-		const result = [];
-		let lhs = parseUnaryExpression();
-		const operator = nextOf(TokenType.InclusiveRangeOperator) ??
-			nextOf(TokenType.ExclusiveRangeOperator);
-		let rhs = operator ? parseUnaryExpression() : undefined;
-		if (!lhs && !rhs) return popError({ message: 'Expected range expression' });
-		if (lhs) result.push(lhs);
-		if (operator) result.push(operator);
-		if (rhs) result.push(rhs);
-		return popTree({ type: TreeType.RangeExpression, items: result });
-	}
-
-	function parseUnaryExpression(): Tree | undefined {
-		push();
-		const result = [];
-		let operator;
-		while (operator =
-			nextOf(TokenType.NotKeyword) ??
-			nextOf(TokenType.NotOperator) ??
-			nextOf(TokenType.PlusOperator) ??
-			nextOf(TokenType.MinusOperator) ??
-			nextOf(TokenType.TimesOperator) ??
-			nextOf(TokenType.AndOperator)
-		) result.push(operator);
-		const operand = parseReferenceExpression();
-		if (!operand) return popError({ message: 'Expected expression' });
-		result.push(operand);
-		return popTree({ type: TreeType.UnaryExpression, items: result });
-	}
-
-	function parseReferenceExpression(): Tree | undefined {
-		push();
-		const result = [];
-		const lhs = parseValue();
-		if (!lhs) return popError({ message: 'Expected value' });
-		result.push(lhs);
-		let match;
-		while (match =
-			parsePropertyAccess() ??
-			parseOptionalPropertyAccess() ??
-			parseArrayIndex() ??
-			parseCall()
-		) result.push(match);
-		return popTree({ type: TreeType.ReferenceExpression, items: result });
-	}
-
-	function parseValue(): Tree | undefined {
-		push();
-		const result = [];
-		let value = parseArrayInitializer() ??
-			nextOf(TokenType.Identifier) ??
-			nextOf(TokenType.StringLiteral) ??
-			nextOf(TokenType.IntLiteral) ??
-			nextOf(TokenType.FloatLiteral) ??
-			nextOf(TokenType.BinaryLiteral) ??
-			nextOf(TokenType.OctalLiteral) ??
-			nextOf(TokenType.HexadecimalLiteral) ??
-			nextOf(TokenType.BoolLiteral) ??
-			nextOf(TokenType.NullKeyword) ??
-			nextOf(TokenType.ThisKeyword) ??
-			nextOf(TokenType.SuperKeyword);
-		if (!value) value = parseCast();
-		if (!value) {
-			if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected value' });
-			value = parseExpressionSequence();
-			if (!value) return popError({ message: 'Expected expression sequence' });
-			if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated expression sequence' });
-		}
-		result.push(value);
-		return popTree({ type: TreeType.Value, items: result });
-	}
-
-	function parseCast(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected cast' });
-		const type = parseUnaryType();
-		if (!type) return popError({ message: 'Expected cast type' });
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated cast' });
-		result.push(type);
-		const value = parseValue();
-		if (!value) return popError({ message: 'Expected cast value' });
-		result.push(value);
-		return popTree({ type: TreeType.Cast, items: result });
-	}
-
-	function parsePropertyAccess(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.AccessOperator)) return popError({ message: 'Expected member access' });
-		const identifier = nextOf(TokenType.Identifier);
-		if (!identifier) return popError({ message: 'Expected identifier' });
-		result.push(identifier);
-		return popTree({ type: TreeType.PropertyAccess, items: result });
-	}
-
-	function parseOptionalPropertyAccess(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OptionalAccessOperator)) return popError({ message: 'Expected optional reference' });
-		let match = nextOf(TokenType.Identifier) ??
-			parseArrayIndex() ??
-			parseCall();
-		if (!match) return popError({ message: 'Expected reference' });
-		result.push(match);
-		return popTree({ type: TreeType.OptionalPropertyAccess, items: result });
-	}
-
-	function parseArrayIndex(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenBracket)) return popError({ message: 'Expected array index' });
-		const index = parseExpressionSequence();
-		if (!index) return popError({ message: 'Expected expression sequence' });
-		result.push(index);
-		if (!nextOf(TokenType.CloseBracket)) return popError({ message: 'Unterminated array index' });
-		return popTree({ type: TreeType.ArrayIndex, items: result });
-	}
-
-	function parseCall(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenParenthesis)) return popError({ message: 'Expected function call' });
-		while (true) {
-			if (result.length && !nextOf(TokenType.CommaPunctuator)) break;
-			const argument = parseCallArgument();
-			if (!argument) {
-				if (!result.length) break;
-				return popError({ message: 'Expected function call argument' });
-			}
-			result.push(argument);
-		}
-		if (!nextOf(TokenType.CloseParenthesis)) return popError({ message: 'Unterminated function call' });
-		return popTree({ type: TreeType.Call, items: result });
-	}
-
-	function parseArrayInitializer(): Tree | undefined {
-		push();
-		const result = [];
-		if (!nextOf(TokenType.OpenBracket)) return popError({ message: 'Expected array initializer' });
-		while (true) {
-			if (result.length && !nextOf(TokenType.CommaPunctuator)) break;
-			const value = parseArrayValue();
-			if (!value) {
-				if (!result.length) break;
-				return popError({ message: 'Expected array value' });
-			}
-			result.push(value);
-		}
-		if (!nextOf(TokenType.CloseBracket)) return popError({ message: 'Unterminated array initializer' });
-		return popTree({ type: TreeType.ArrayInitializer, items: result });
-	}
-
-	function parseArrayValue(): Tree | undefined {
-		push();
-		const result = [];
-		const argument = parseAssignmentExpression();
-		if (!argument) return popError({ message: 'Expected expression' });
-		result.push(argument);
-		return popTree({ type: TreeType.ArrayValue, items: result });
-	}
-
-	function parseCallArgument(): Tree | undefined {
-		push();
-		const result = [];
-		const argument = parseAssignmentExpression();
-		if (!argument) return popError({ message: 'Expected expression' });
-		result.push(argument);
-		return popTree({ type: TreeType.CallArgument, items: result });
-	}
-
+import { mutate, ParserError } from './utils';
+
+export class Parser {
+    readonly tokens: Token[];
+    private stack: Token[][];
+    private error: ParserError | null;
+
+    constructor(tokens: Token[], source: string) {
+        this.tokens = tokens.slice();
+        this.stack = [this.tokens];
+        this.error = null;
+    }
+
+    private current(): Token[] {
+        return this.stack[this.stack.length - 1];
+    }
+
+    private parent(): Token[] {
+        return this.stack[this.stack.length - 2];
+    }
+
+    private push() {
+        this.stack.push(this.current().slice());
+    }
+
+    private pop(update: boolean = true) {
+        const tokens = this.stack.pop();
+        if (update) mutate(this.current(), tokens!);
+    }
+
+    private throw(error: ParserError, pop: boolean = true) {
+        if (!this.error || error.start >= this.error.start) this.error = error;
+        if (pop) this.pop(false);
+        return undefined;
+    }
+
+    private tree(
+        tree: Omit<Omit<Tree, 'start'>, 'stop'>,
+        pop: boolean = true
+    ): Tree {
+        const start = this.start(this.parent());
+        const stop = this.start(this.current());
+        if (pop) this.pop();
+        return { ...tree, start, stop };
+    }
+
+    private start(tokens: Token[] = this.current()): number {
+        return tokens.length > 0
+            ? tokens[0].start
+            : this.tokens.length > 0
+            ? this.tokens[this.tokens.length - 1].start
+            : 0;
+    }
+
+    private stop(tokens: Token[] = this.current()): number {
+        return tokens.length > 0
+            ? tokens[0].stop
+            : this.tokens.length > 0
+            ? this.tokens[this.tokens.length - 1].stop
+            : 0;
+    }
+
+    private consume(type: TokenType) {
+        const tokens = this.current();
+        if (tokens.length && tokens[0].type === type) return tokens.shift();
+    }
+
+    public ast(): Tree | ParserError {
+        const result = this.parseBody();
+        if (this.stack[0].length) {
+            const token = this.stack[0][0];
+            this.throw(
+                new ParserError(
+                    'Unexpected token',
+                    token.text,
+                    token.start,
+                    token.stop
+                ),
+                false
+            );
+        }
+        return !result || this.stack[0].length ? this.error! : result;
+    }
+
+    public parseBody(): Tree | undefined {
+        this.push();
+        const result = [];
+        while (true) {
+            const statement = this.parseStatement();
+            if (!statement) break;
+            result.push(statement);
+        }
+        return this.tree({ type: TreeType.Body, items: result });
+    }
+
+    public parseStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        const statement =
+            this.parseLabeledStatement() ??
+            this.parseFieldStatement() ??
+            this.parseExpressionStatement() ??
+            this.parseDefStatement() ??
+            this.parseIfStatement() ??
+            this.parseWhileStatement() ??
+            this.parseMatchStatement() ??
+            this.parseDoStatement() ??
+            this.parseForStatement() ??
+            this.parseReturnStatement() ??
+            this.parseContinueStatement() ??
+            this.parseBreakStatement() ??
+            this.parseBlockStatement() ??
+            this.parseEmptyStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        return this.tree({ type: TreeType.Statement, items: result });
+    }
+
+    public parseLabeledStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        const identifier = this.consume(TokenType.Identifier);
+        if (!identifier)
+            return this.throw(
+                new ParserError(
+                    'Expected labeled statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(identifier);
+        if (!this.consume(TokenType.ColonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected ":" after label',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const statement = this.parseStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        return this.tree({ type: TreeType.LabeledStatement, items: result });
+    }
+
+    public parseBlockStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenBrace))
+            return this.throw(
+                new ParserError(
+                    'Expected block statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        while (true) {
+            const statement = this.parseStatement();
+            if (!statement) break;
+            result.push(statement);
+        }
+        if (!this.consume(TokenType.CloseBrace))
+            return this.throw(
+                new ParserError(
+                    'Unterminated block statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.BlockStatement, items: result });
+    }
+
+    public parseIfStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.IfKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected if statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected if condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const condition = this.parseExpressionSequence();
+        if (!condition)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(condition);
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated if condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const statement = this.parseStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        if (this.consume(TokenType.ElseKeyword)) {
+            const statement = this.parseStatement();
+            if (!statement)
+                return this.throw(
+                    new ParserError(
+                        'Expected statement',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            result.push(statement);
+        }
+        return this.tree({ type: TreeType.IfStatement, items: result });
+    }
+
+    public parseWhileStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.WhileKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected while statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected while condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const condition = this.parseExpressionSequence();
+        if (!condition)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(condition);
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated while condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const statement = this.parseStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        return this.tree({ type: TreeType.WhileStatement, items: result });
+    }
+
+    public parseMatchStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.MatchKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected match statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected match value',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const value = this.parseExpressionSequence();
+        if (!value)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(value);
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated match value',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenBrace))
+            return this.throw(
+                new ParserError(
+                    'Expected match body',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        let match = false;
+        while (true) {
+            const option = this.parseMatchOption();
+            if (!option) break;
+            match = false;
+            result.push(option);
+        }
+        const fallback = this.parseBody();
+        if (fallback) result.push(fallback);
+        else if (!match)
+            return this.throw(
+                new ParserError(
+                    'Expected match options or fallback',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.CloseBrace))
+            return this.throw(
+                new ParserError(
+                    'Unterminated match body',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.MatchStatement, items: result });
+    }
+
+    public parseMatchOption(): Tree | undefined {
+        this.push();
+        const result = [];
+        const expression = this.parseAssignmentExpression();
+        if (!expression)
+            return this.throw(
+                new ParserError(
+                    'Expected match option',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(expression);
+        if (!this.consume(TokenType.ArrowOperator))
+            return this.throw(
+                new ParserError(
+                    'Expected "=>"',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const body = this.parseStatement();
+        if (!body)
+            return this.throw(
+                new ParserError(
+                    'Expected match option body',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(body);
+        return this.tree({ type: TreeType.MatchOption, items: result });
+    }
+
+    public parseDefStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.DefKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected def statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const identifier = this.consume(TokenType.Identifier);
+        if (!identifier)
+            return this.throw(
+                new ParserError(
+                    'Expected identifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(identifier);
+        const parameters = this.parseParameters();
+        if (!parameters)
+            return this.throw(
+                new ParserError(
+                    'Expected parameters',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(parameters);
+        if (this.consume(TokenType.ColonPunctuator)) {
+            const type = this.parseUnaryType();
+            if (!type)
+                return this.throw(
+                    new ParserError(
+                        'Expected type',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            result.push(type);
+        }
+        const statement =
+            this.parseBlockStatement() ?? this.parseEmptyStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected def body',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        return this.tree({ type: TreeType.DefStatement, items: result });
+    }
+
+    public parseParameters(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected parameters',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        while (true) {
+            if (result.length && !this.consume(TokenType.CommaPunctuator))
+                break;
+            const parameter = this.parseParameter();
+            if (!parameter) {
+                if (!result.length) break;
+                return this.throw(
+                    new ParserError(
+                        'Expected parameter',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            }
+            result.push(parameter);
+        }
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated parameters',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.Parameters, items: result });
+    }
+
+    public parseParameter(): Tree | undefined {
+        this.push();
+        const result = [];
+        const item =
+            this.consume(TokenType.Identifier) ??
+            this.consume(TokenType.InclusiveRangeOperator);
+        if (!item)
+            return this.throw(
+                new ParserError(
+                    'Expected parameter',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(item);
+        if (item.type === TokenType.Identifier) {
+            if (!this.consume(TokenType.ColonPunctuator))
+                return this.throw(
+                    new ParserError(
+                        'Expected ":" after parameter name',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            const type = this.parseUnaryType();
+            if (!type)
+                return this.throw(
+                    new ParserError(
+                        'Expected type',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            result.push(type);
+        }
+        return this.tree({ type: TreeType.Parameter, items: result });
+    }
+
+    public parseDoStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.DoKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected do statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const statement = this.parseStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        if (!this.consume(TokenType.WhileKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected while clause',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected do condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const condition = this.parseExpressionSequence();
+        if (!condition)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(condition);
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated while condition',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.DoStatement, items: result });
+    }
+
+    public parseForStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.ForKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected for statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected for iterator',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const identifier = this.consume(TokenType.Identifier);
+        if (!identifier)
+            return this.throw(
+                new ParserError(
+                    'Expected identifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(identifier);
+        if (!this.consume(TokenType.InKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected in clause',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const expression = this.parseAssignmentExpression();
+        if (!expression)
+            return this.throw(
+                new ParserError(
+                    'Expected iterator expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(expression);
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated for iterator',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const statement = this.parseStatement();
+        if (!statement)
+            return this.throw(
+                new ParserError(
+                    'Expected statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(statement);
+        return this.tree({ type: TreeType.ForStatement, items: result });
+    }
+
+    public parseReturnStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.ReturnKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected return statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const value = this.parseExpressionSequence();
+        if (value) result.push(value);
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ReturnStatement, items: result });
+    }
+
+    public parseContinueStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.ContinueKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected continue statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const identifier = this.consume(TokenType.Identifier);
+        if (identifier) result.push(identifier);
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ContinueStatement, items: result });
+    }
+
+    public parseBreakStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.BreakKeyword))
+            return this.throw(
+                new ParserError(
+                    'Expected break statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const identifier = this.consume(TokenType.Identifier);
+        if (identifier) result.push(identifier);
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.BreakStatement, items: result });
+    }
+
+    public parseEmptyStatement(): Tree | undefined {
+        this.push();
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.EmptyStatement, items: [] });
+    }
+
+    public parseExpressionStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        const expressions = this.parseExpressionSequence();
+        if (!expressions)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(expressions);
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ExpressionStatement, items: result });
+    }
+
+    public parseFieldStatement(): Tree | undefined {
+        this.push();
+        const result = [];
+        const keyword =
+            this.consume(TokenType.ValKeyword) ??
+            this.consume(TokenType.VarKeyword);
+        if (!keyword)
+            return this.throw(
+                new ParserError(
+                    'Expected field statement',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(keyword);
+        const identifier = this.consume(TokenType.Identifier);
+        if (!identifier)
+            return this.throw(
+                new ParserError(
+                    'Expected field name ',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(identifier);
+        if (this.consume(TokenType.ColonPunctuator)) {
+            const type = this.parseUnionType();
+            if (!type)
+                return this.throw(
+                    new ParserError(
+                        'Expected field type',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            result.push(type);
+        }
+        if (this.consume(TokenType.AssignOperator)) {
+            const expression = this.parseAssignmentExpression();
+            if (!expression)
+                return this.throw(
+                    new ParserError(
+                        'Expected expression',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            result.push(expression);
+        }
+        if (!this.consume(TokenType.SemicolonPunctuator))
+            return this.throw(
+                new ParserError(
+                    'Expected semicolon',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.FieldStatement, items: result });
+    }
+
+    public parseUnionType(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseIntersectionType();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected union type',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.OrOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseIntersectionType();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.UnionType, items: result });
+    }
+
+    public parseIntersectionType(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseUnaryType();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected intersection type',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.AndOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseUnaryType();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.IntersectionType, items: result });
+    }
+
+    public parseUnaryType(): Tree | undefined {
+        this.push();
+        const result = [];
+        const base =
+            this.consume(TokenType.Identifier) ??
+            this.consume(TokenType.IntegerType) ??
+            this.consume(TokenType.UnsignedIntegerType) ??
+            this.consume(TokenType.FloatType) ??
+            this.consume(TokenType.BooleanType) ??
+            this.consume(TokenType.StringType) ??
+            this.consume(TokenType.VoidType);
+        if (!base)
+            return this.throw(
+                new ParserError(
+                    'Expected type or identifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(base);
+        while (true) {
+            const match = this.parseGenericType() ?? this.parseArrayType();
+            if (match) {
+                result.push(match);
+                continue;
+            }
+            const operator =
+                this.consume(TokenType.TimesOperator) ??
+                this.consume(TokenType.OptionalOperator);
+            if (!operator) break;
+            result.push(operator);
+        }
+        return this.tree({ type: TreeType.UnaryType, items: result });
+    }
+
+    public parseArrayType(): Tree | undefined {
+        this.push();
+        if (!this.consume(TokenType.OpenBracket))
+            return this.throw(
+                new ParserError(
+                    'Expected array type modifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.CloseBracket))
+            return this.throw(
+                new ParserError(
+                    'Unterminated array type modifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ArrayType, items: [] });
+    }
+
+    public parseGenericType(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.LessThanOperator))
+            return this.throw(
+                new ParserError(
+                    'Expected generic type arguments',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const lhs = this.parseUnionType();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected generic type argument',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.CommaPunctuator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseUnionType();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        if (!this.consume(TokenType.GreaterThanOperator))
+            return this.throw(
+                new ParserError(
+                    'Unterminated generic type arguments',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.GenericType, items: result });
+    }
+
+    public parseExpressionSequence(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseAssignmentExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.CommaPunctuator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseAssignmentExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.ExpressionSequence, items: result });
+    }
+
+    public parseAssignmentExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseTernaryExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected assignment expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        this.push();
+        const operator =
+            this.consume(TokenType.PlusAssignOperator) ??
+            this.consume(TokenType.MinusAssignOperator) ??
+            this.consume(TokenType.TimesAssignOperator) ??
+            this.consume(TokenType.DivideAssignOperator) ??
+            this.consume(TokenType.ModuloAssignOperator) ??
+            this.consume(TokenType.AndAssignOperator) ??
+            this.consume(TokenType.OrAssignOperator) ??
+            this.consume(TokenType.XorAssignOperator) ??
+            this.consume(TokenType.CoalesceAssignOperator) ??
+            this.consume(TokenType.LeftShiftAssignOperator) ??
+            this.consume(TokenType.RightShiftAssignOperator) ??
+            this.consume(TokenType.UnsignedRightShiftAssignOperator) ??
+            this.consume(TokenType.AssignOperator);
+        if (operator) {
+            const rhs = this.parseTernaryExpression();
+            if (rhs) {
+                result.push(operator, rhs);
+                this.pop();
+            } else {
+                this.pop(false);
+            }
+        } else {
+            this.pop(false);
+        }
+        return this.tree({
+            type: TreeType.AssignmentExpression,
+            items: result,
+        });
+    }
+
+    public parseTernaryExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const condition = this.parseCoalesceExpression();
+        if (!condition)
+            return this.throw(
+                new ParserError(
+                    'Expected ternary expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(condition);
+        this.push();
+        ternary: if (this.consume(TokenType.OptionalOperator)) {
+            const lhs = this.parseAssignmentExpression();
+            if (!lhs) {
+                this.pop(false);
+                break ternary;
+            }
+            if (!this.consume(TokenType.ColonPunctuator)) {
+                this.pop(false);
+                break ternary;
+            }
+            const rhs = this.parseAssignmentExpression();
+            if (!rhs) {
+                this.pop(false);
+                break ternary;
+            }
+            result.push(lhs, rhs);
+            this.pop();
+        } else {
+            this.pop(false);
+        }
+        return this.tree({ type: TreeType.TernaryExpression, items: result });
+    }
+
+    public parseCoalesceExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseLogicalOrExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected coalesce expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.CoalesceOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseLogicalOrExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.CoalesceExpression, items: result });
+    }
+
+    public parseLogicalOrExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseLogicalAndExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected logical or expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.OrKeyword)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseLogicalAndExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.LogicalOrExpression, items: result });
+    }
+
+    public parseLogicalAndExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseBitwiseOrExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected logical and expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.AndKeyword)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseBitwiseOrExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({
+            type: TreeType.LogicalAndExpression,
+            items: result,
+        });
+    }
+
+    public parseBitwiseOrExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseBitwiseXorExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected bitwise or expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.OrOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseBitwiseXorExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.BitwiseOrExpression, items: result });
+    }
+
+    public parseBitwiseXorExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseBitwiseAndExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected bitwise xor expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.XorOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseBitwiseAndExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({
+            type: TreeType.BitwiseXorExpression,
+            items: result,
+        });
+    }
+
+    public parseBitwiseAndExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseEqualityExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected bitwise and expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            if (!this.consume(TokenType.AndOperator)) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseEqualityExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({
+            type: TreeType.BitwiseAndExpression,
+            items: result,
+        });
+    }
+
+    public parseEqualityExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseComparisonExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected equality expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            const operator =
+                this.consume(TokenType.EqualOperator) ??
+                this.consume(TokenType.NotEqualOperator);
+            if (!operator) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseComparisonExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(operator, rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.EqualityExpression, items: result });
+    }
+
+    public parseComparisonExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseShiftExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected comparison expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            const operator =
+                this.consume(TokenType.LessThanEqualOperator) ??
+                this.consume(TokenType.GreaterThanEqualOperator) ??
+                this.consume(TokenType.LessThanOperator) ??
+                this.consume(TokenType.GreaterThanOperator) ??
+                this.consume(TokenType.AsKeyword) ??
+                this.consume(TokenType.IsKeyword) ??
+                this.consume(TokenType.InKeyword);
+            if (!operator) {
+                this.pop(false);
+                break;
+            }
+            const rhs =
+                operator.type === TokenType.AsKeyword ||
+                operator.type === TokenType.IsKeyword
+                    ? this.parseUnaryType()
+                    : this.parseShiftExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(operator, rhs);
+            this.pop();
+        }
+        return this.tree({
+            type: TreeType.ComparisonExpression,
+            items: result,
+        });
+    }
+
+    public parseShiftExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseTermExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected shift expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            const operator =
+                this.consume(TokenType.LeftShiftOperator) ??
+                this.consume(TokenType.RightShiftOperator) ??
+                this.consume(TokenType.UnsignedRightShiftOperator);
+            if (!operator) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseTermExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(operator, rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.ShiftExpression, items: result });
+    }
+
+    public parseTermExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseFactorExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected term expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            const operator =
+                this.consume(TokenType.PlusOperator) ??
+                this.consume(TokenType.MinusOperator);
+            if (!operator) {
+                this.pop(false);
+                break;
+            }
+            result.push(operator);
+            const rhs = this.parseFactorExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.TermExpression, items: result });
+    }
+
+    public parseFactorExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseRangeExpression();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected factor expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        while (true) {
+            this.push();
+            const operator =
+                this.consume(TokenType.TimesOperator) ??
+                this.consume(TokenType.DivideOperator) ??
+                this.consume(TokenType.ModuloOperator);
+            if (!operator) {
+                this.pop(false);
+                break;
+            }
+            const rhs = this.parseRangeExpression();
+            if (!rhs) {
+                this.pop(false);
+                break;
+            }
+            result.push(operator, rhs);
+            this.pop();
+        }
+        return this.tree({ type: TreeType.FactorExpression, items: result });
+    }
+
+    public parseRangeExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        let lhs = this.parseUnaryExpression();
+        const operator =
+            this.consume(TokenType.InclusiveRangeOperator) ??
+            this.consume(TokenType.ExclusiveRangeOperator);
+        let rhs = operator ? this.parseUnaryExpression() : undefined;
+        if (!lhs && !rhs)
+            return this.throw(
+                new ParserError(
+                    'Expected range expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (lhs) result.push(lhs);
+        if (operator) result.push(operator);
+        if (rhs) result.push(rhs);
+        return this.tree({ type: TreeType.RangeExpression, items: result });
+    }
+
+    public parseUnaryExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        let operator;
+        while (
+            (operator =
+                this.consume(TokenType.NotKeyword) ??
+                this.consume(TokenType.NotOperator) ??
+                this.consume(TokenType.PlusOperator) ??
+                this.consume(TokenType.MinusOperator) ??
+                this.consume(TokenType.TimesOperator) ??
+                this.consume(TokenType.AndOperator))
+        )
+            result.push(operator);
+        const operand = this.parseReferenceExpression();
+        if (!operand)
+            return this.throw(
+                new ParserError(
+                    'Expected expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(operand);
+        return this.tree({ type: TreeType.UnaryExpression, items: result });
+    }
+
+    public parseReferenceExpression(): Tree | undefined {
+        this.push();
+        const result = [];
+        const lhs = this.parseValue();
+        if (!lhs)
+            return this.throw(
+                new ParserError(
+                    'Expected value',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(lhs);
+        let match;
+        while (
+            (match =
+                this.parsePropertyAccess() ??
+                this.parseOptionalPropertyAccess() ??
+                this.parseArrayIndex() ??
+                this.parseCall())
+        )
+            result.push(match);
+        return this.tree({ type: TreeType.ReferenceExpression, items: result });
+    }
+
+    public parseValue(): Tree | undefined {
+        this.push();
+        const result = [];
+        let value =
+            this.parseArrayInitializer() ??
+            this.consume(TokenType.Identifier) ??
+            this.consume(TokenType.StringLiteral) ??
+            this.consume(TokenType.IntLiteral) ??
+            this.consume(TokenType.FloatLiteral) ??
+            this.consume(TokenType.BinaryLiteral) ??
+            this.consume(TokenType.OctalLiteral) ??
+            this.consume(TokenType.HexadecimalLiteral) ??
+            this.consume(TokenType.BoolLiteral) ??
+            this.consume(TokenType.NullKeyword) ??
+            this.consume(TokenType.ThisKeyword) ??
+            this.consume(TokenType.SuperKeyword);
+        if (!value) value = this.parseCast();
+        if (!value) {
+            if (!this.consume(TokenType.OpenParenthesis))
+                return this.throw(
+                    new ParserError(
+                        'Expected value',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            value = this.parseExpressionSequence();
+            if (!value)
+                return this.throw(
+                    new ParserError(
+                        'Expected expression sequence',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            if (!this.consume(TokenType.CloseParenthesis))
+                return this.throw(
+                    new ParserError(
+                        'Unterminated expression sequence',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+        }
+        result.push(value);
+        return this.tree({ type: TreeType.Value, items: result });
+    }
+
+    public parseCast(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected cast',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const type = this.parseUnaryType();
+        if (!type)
+            return this.throw(
+                new ParserError(
+                    'Expected cast type',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated cast',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(type);
+        const value = this.parseValue();
+        if (!value)
+            return this.throw(
+                new ParserError(
+                    'Expected cast value',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(value);
+        return this.tree({ type: TreeType.Cast, items: result });
+    }
+
+    public parsePropertyAccess(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.AccessOperator))
+            return this.throw(
+                new ParserError(
+                    'Expected member access',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const identifier = this.consume(TokenType.Identifier);
+        if (!identifier)
+            return this.throw(
+                new ParserError(
+                    'Expected identifier',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(identifier);
+        return this.tree({ type: TreeType.PropertyAccess, items: result });
+    }
+
+    public parseOptionalPropertyAccess(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OptionalAccessOperator))
+            return this.throw(
+                new ParserError(
+                    'Expected optional reference',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        let match =
+            this.consume(TokenType.Identifier) ??
+            this.parseArrayIndex() ??
+            this.parseCall();
+        if (!match)
+            return this.throw(
+                new ParserError(
+                    'Expected reference',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(match);
+        return this.tree({
+            type: TreeType.OptionalPropertyAccess,
+            items: result,
+        });
+    }
+
+    public parseArrayIndex(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenBracket))
+            return this.throw(
+                new ParserError(
+                    'Expected array index',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        const index = this.parseExpressionSequence();
+        if (!index)
+            return this.throw(
+                new ParserError(
+                    'Expected expression sequence',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(index);
+        if (!this.consume(TokenType.CloseBracket))
+            return this.throw(
+                new ParserError(
+                    'Unterminated array index',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ArrayIndex, items: result });
+    }
+
+    public parseCall(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Expected call',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        while (true) {
+            if (result.length && !this.consume(TokenType.CommaPunctuator))
+                break;
+            const argument = this.parseCallArgument();
+            if (!argument) {
+                if (!result.length) break;
+                return this.throw(
+                    new ParserError(
+                        'Expected call argument',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            }
+            result.push(argument);
+        }
+        if (!this.consume(TokenType.CloseParenthesis))
+            return this.throw(
+                new ParserError(
+                    'Unterminated call',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.Call, items: result });
+    }
+
+    public parseArrayInitializer(): Tree | undefined {
+        this.push();
+        const result = [];
+        if (!this.consume(TokenType.OpenBracket))
+            return this.throw(
+                new ParserError(
+                    'Expected array initializer',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        while (true) {
+            if (result.length && !this.consume(TokenType.CommaPunctuator))
+                break;
+            const value = this.parseArrayValue();
+            if (!value) {
+                if (!result.length) break;
+                return this.throw(
+                    new ParserError(
+                        'Expected array value',
+                        null,
+                        this.start(),
+                        this.stop()
+                    )
+                );
+            }
+            result.push(value);
+        }
+        if (!this.consume(TokenType.CloseBracket))
+            return this.throw(
+                new ParserError(
+                    'Unterminated array initializer',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        return this.tree({ type: TreeType.ArrayInitializer, items: result });
+    }
+
+    public parseArrayValue(): Tree | undefined {
+        this.push();
+        const result = [];
+        const argument = this.parseAssignmentExpression();
+        if (!argument)
+            return this.throw(
+                new ParserError(
+                    'Expected expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(argument);
+        return this.tree({ type: TreeType.ArrayValue, items: result });
+    }
+
+    public parseCallArgument(): Tree | undefined {
+        this.push();
+        const result = [];
+        const argument = this.parseAssignmentExpression();
+        if (!argument)
+            return this.throw(
+                new ParserError(
+                    'Expected expression',
+                    null,
+                    this.start(),
+                    this.stop()
+                )
+            );
+        result.push(argument);
+        return this.tree({ type: TreeType.CallArgument, items: result });
+    }
 }

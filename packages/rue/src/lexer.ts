@@ -1,340 +1,345 @@
 import { Token, TokenType } from './token';
-import { ErrorInfo, RueError, toPosition } from './utils';
-import util from 'util';
+import { LexerError } from './utils';
 
-export function lex(source: string): Token[] {
+export const keywords: Record<string, TokenType> = {
+    and: TokenType.AndKeyword,
+    or: TokenType.OrKeyword,
+    not: TokenType.NotKeyword,
+    for: TokenType.ForKeyword,
+    while: TokenType.WhileKeyword,
+    continue: TokenType.ContinueKeyword,
+    break: TokenType.BreakKeyword,
+    return: TokenType.ReturnKeyword,
+    macro: TokenType.MacroKeyword,
+    public: TokenType.PublicKeyword,
+    private: TokenType.PrivateKeyword,
+    protected: TokenType.ProtectedKeyword,
+    do: TokenType.DoKeyword,
+    is: TokenType.IsKeyword,
+    as: TokenType.AsKeyword,
+    if: TokenType.IfKeyword,
+    else: TokenType.ElseKeyword,
+    try: TokenType.TryKeyword,
+    catch: TokenType.CatchKeyword,
+    throw: TokenType.ThrowKeyword,
+    def: TokenType.DefKeyword,
+    val: TokenType.ValKeyword,
+    var: TokenType.VarKeyword,
+    in: TokenType.InKeyword,
+    match: TokenType.MatchKeyword,
+    from: TokenType.FromKeyword,
+    import: TokenType.ImportKeyword,
+    export: TokenType.ExportKeyword,
+    extern: TokenType.ExternKeyword,
+    type: TokenType.TypeKeyword,
+    enum: TokenType.EnumKeyword,
+    struct: TokenType.StructKeyword,
+    class: TokenType.ClassKeyword,
+    void: TokenType.VoidType,
+    int: TokenType.IntegerType,
+    i8: TokenType.IntegerType,
+    i16: TokenType.IntegerType,
+    i32: TokenType.IntegerType,
+    i64: TokenType.IntegerType,
+    uint: TokenType.UnsignedIntegerType,
+    u8: TokenType.UnsignedIntegerType,
+    u16: TokenType.UnsignedIntegerType,
+    u32: TokenType.UnsignedIntegerType,
+    u64: TokenType.UnsignedIntegerType,
+    float: TokenType.FloatType,
+    f32: TokenType.FloatType,
+    f64: TokenType.FloatType,
+    bool: TokenType.BooleanType,
+    string: TokenType.StringType,
+    true: TokenType.BoolLiteral,
+    false: TokenType.BoolLiteral,
+    super: TokenType.SuperKeyword,
+    this: TokenType.ThisKeyword,
+    null: TokenType.NullKeyword,
+};
 
-	const tokens: Token[] = [];
-	let text = source;
-	let previous: string;
+export const operators: Record<string, TokenType> = {
+    '==': TokenType.EqualOperator,
+    '!=': TokenType.NotEqualOperator,
+    '+=': TokenType.PlusAssignOperator,
+    '-=': TokenType.MinusAssignOperator,
+    '*=': TokenType.TimesAssignOperator,
+    '/=': TokenType.DivideAssignOperator,
+    '%=': TokenType.ModuloAssignOperator,
+    '&=': TokenType.AndAssignOperator,
+    '|=': TokenType.OrAssignOperator,
+    '^=': TokenType.XorAssignOperator,
+    '?=': TokenType.CoalesceAssignOperator,
+    '<<=': TokenType.LeftShiftAssignOperator,
+    '>>>=': TokenType.UnsignedRightShiftAssignOperator,
+    '>>=': TokenType.RightShiftAssignOperator,
+    '=>': TokenType.ArrowOperator,
+    '=': TokenType.AssignOperator,
+    '+': TokenType.PlusOperator,
+    '-': TokenType.MinusOperator,
+    '*': TokenType.TimesOperator,
+    '/': TokenType.DivideOperator,
+    '%': TokenType.ModuloOperator,
+    '~': TokenType.NotOperator,
+    '?:': TokenType.CoalesceOperator,
+    '&': TokenType.AndOperator,
+    '|': TokenType.OrOperator,
+    '^': TokenType.XorOperator,
+    '<<': TokenType.LeftShiftOperator,
+    '>>>': TokenType.UnsignedRightShiftOperator,
+    '>>': TokenType.RightShiftOperator,
+    '<=': TokenType.LessThanEqualOperator,
+    '>=': TokenType.GreaterThanEqualOperator,
+    '<': TokenType.LessThanOperator,
+    '>': TokenType.GreaterThanOperator,
+    '?.': TokenType.OptionalAccessOperator,
+    '?': TokenType.OptionalOperator,
+    '...': TokenType.InclusiveRangeOperator,
+    '..': TokenType.ExclusiveRangeOperator,
+    '.': TokenType.AccessOperator,
+    '(': TokenType.OpenParenthesis,
+    ')': TokenType.CloseParenthesis,
+    '[': TokenType.OpenBracket,
+    ']': TokenType.CloseBracket,
+    '{': TokenType.OpenBrace,
+    '}': TokenType.CloseBrace,
+    ';': TokenType.SemicolonPunctuator,
+    ':': TokenType.ColonPunctuator,
+    ',': TokenType.CommaPunctuator,
+    _: TokenType.UnderscorePunctuator,
+};
 
-	function textIndex(text: string): number {
-		return source.length - text.length;
-	}
+const operatorEntries = Object.entries(operators);
 
-	function makeToken(token: Omit<Omit<Token, 'start'>, 'stop'>) {
-		tokens.push({ ...token, start: textIndex(previous), stop: textIndex(text) });
-	}
+export class Lexer {
+    readonly source: string;
+    private text: string;
 
-	function makeError(info: ErrorInfo<string>) {
-		const index = textIndex(text);
-		const start = toPosition(index, source);
-		const stop = toPosition(index + 1, source);
-		throw new RueError(typeof info.message === 'string' ? info.message : info.message(source[source.length - text.length]), start, stop);
-	}
+    constructor(source: string) {
+        this.source = source;
+        this.text = source;
+    }
 
-	const operators: [string, TokenType][] = [
-		['==', TokenType.EqualOperator],
-		['!=', TokenType.NotEqualOperator],
-		['+=', TokenType.PlusAssignOperator],
-		['-=', TokenType.MinusAssignOperator],
-		['*=', TokenType.TimesAssignOperator],
-		['/=', TokenType.DivideAssignOperator],
-		['%=', TokenType.ModuloAssignOperator],
-		['&=', TokenType.AndAssignOperator],
-		['|=', TokenType.OrAssignOperator],
-		['^=', TokenType.XorAssignOperator],
-		['?=', TokenType.CoalesceAssignOperator],
-		['<<=', TokenType.LeftShiftAssignOperator],
-		['>>>=', TokenType.UnsignedRightShiftAssignOperator],
-		['>>=', TokenType.RightShiftAssignOperator],
-		['=>', TokenType.ArrowOperator],
-		['=', TokenType.AssignOperator],
-		['+', TokenType.PlusOperator],
-		['-', TokenType.MinusOperator],
-		['*', TokenType.TimesOperator],
-		['/', TokenType.DivideOperator],
-		['%', TokenType.ModuloOperator],
-		['~', TokenType.NotOperator],
-		['?:', TokenType.CoalesceOperator],
-		['&', TokenType.AndOperator],
-		['|', TokenType.OrOperator],
-		['^', TokenType.XorOperator],
-		['<<', TokenType.LeftShiftOperator],
-		['>>>', TokenType.UnsignedRightShiftOperator],
-		['>>', TokenType.RightShiftOperator],
-		['<=', TokenType.LessThanEqualOperator],
-		['>=', TokenType.GreaterThanEqualOperator],
-		['<', TokenType.LessThanOperator],
-		['>', TokenType.GreaterThanOperator],
-		['?.', TokenType.OptionalAccessOperator],
-		['?', TokenType.OptionalOperator],
-		['...', TokenType.InclusiveRangeOperator],
-		['..', TokenType.ExclusiveRangeOperator],
-		['.', TokenType.AccessOperator],
-		['(', TokenType.OpenParenthesis],
-		[')', TokenType.CloseParenthesis],
-		['[', TokenType.OpenBracket],
-		[']', TokenType.CloseBracket],
-		['{', TokenType.OpenBrace],
-		['}', TokenType.CloseBrace],
-		[';', TokenType.SemicolonPunctuator],
-		[':', TokenType.ColonPunctuator],
-		[',', TokenType.CommaPunctuator],
-		['_', TokenType.UnderscorePunctuator]
-	];
+    public index() {
+        return this.source.length - this.text.length;
+    }
 
-	while (text.length > 0) {
+    public tokens(): Token[] | LexerError {
+        const tokens = [];
+        while (this.index() < this.source.length) {
+            const token = this.consume();
+            if (token instanceof LexerError) return token;
+            if (token) tokens.push(token);
+        }
+        return tokens;
+    }
 
-		previous = text;
+    public consume(): Token | LexerError | undefined {
+        const start = this.index();
+        if (this.index() >= this.source.length)
+            return new LexerError('Unexpected end of file', '', start, start);
+        let match;
+        if (
+            (match =
+                this.text.match(/^[\r\n\f\v\t ]/) ??
+                this.text.match(/^\/\/.*/) ??
+                this.text.match(/^\/\*[^]*?\*\//))
+        ) {
+            this.eat(match[0].length);
+            return undefined;
+        }
+        if ((match = this.text.match(/^[a-zA-Z](?:_?[a-zA-Z0-9]+)*/))) {
+            this.eat(match[0].length);
+            if (match[0] in keywords) {
+                return {
+                    type: keywords[match[0]],
+                    text: match[0],
+                    start: start,
+                    stop: this.index(),
+                };
+            } else {
+                return {
+                    type: TokenType.Identifier,
+                    text: match[0],
+                    start: start,
+                    stop: this.index(),
+                };
+            }
+        }
+        if ((match = this.text.match(/^0[xX][0-9a-fA-F]+/)) !== null) {
+            this.eat(match[0].length);
+            return {
+                type: TokenType.HexadecimalLiteral,
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        } else if ((match = this.text.match(/^0[oO][0-7]+/)) !== null) {
+            this.eat(match[0].length);
+            return {
+                type: TokenType.OctalLiteral,
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        } else if ((match = this.text.match(/^0[bB][0-1]+/)) !== null) {
+            this.eat(match[0].length);
+            return {
+                type: TokenType.BinaryLiteral,
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        } else if (
+            (match = this.text.match(
+                /^[0-9]+\.[0-9]+(?:[eE][+\-]?[0-9]+)?/
+            )) !== null
+        ) {
+            this.eat(match[0].length);
+            return {
+                type: TokenType.FloatLiteral,
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        } else if (
+            (match = this.text.match(/^[0-9]+(?:[eE][+\-]?[0-9]+)?/)) !== null
+        ) {
+            this.eat(match[0].length);
+            return {
+                type: TokenType.IntLiteral,
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        } else if (/^['"]/.test(this.text[0])) {
+            let string = this.text[0];
+            this.eat(1);
+            let closed = false;
+            while (this.text.length > 0) {
+                const char = this.text[0];
+                this.eat(1);
+                if (char === '\\') {
+                    const escape = this.text[0];
+                    if (!escape) {
+                        return new LexerError(
+                            'Unexpected end of escape',
+                            null,
+                            start,
+                            this.index()
+                        );
+                    }
+                    this.eat(1);
+                    if (escape === 'n') string += '\n';
+                    else if (escape === 'r') string += '\r';
+                    else if (escape === 'n') string += '\n';
+                    else if (escape === 'f') string += '\f';
+                    else if (escape === 'v') string += '\v';
+                    else if (escape === 't') string += '\t';
+                    else if (escape === 'b') string += '\b';
+                    else if (escape === '0') string += '\0';
+                    else if (escape === 'x') {
+                        const hex = this.text.slice(0, 2);
+                        if (!/^[0-9A-F]{2}$/.test(hex)) {
+                            return new LexerError(
+                                'Invalid or lowercase hexadecimal escape sequence',
+                                null,
+                                start,
+                                this.index()
+                            );
+                        }
+                        this.eat(2);
+                        const number = parseInt(hex, 16);
+                        string += String.fromCharCode(number);
+                    } else if (escape === 'u') {
+                        const next = this.text[0];
+                        if (next === '{') {
+                            this.eat(1);
+                            let hex = '';
+                            for (let i = 0; i < this.text.length; i++) {
+                                hex += this.text[i];
+                                if (this.text[i] === '}') break;
+                            }
+                            if (!hex.endsWith('}')) {
+                                return new LexerError(
+                                    'Invalid or lowercase unicode escape sequence',
+                                    null,
+                                    start,
+                                    this.index()
+                                );
+                            }
+                            hex = hex.slice(0, -1);
+                            const number = parseInt(hex, 16);
+                            if (number > 0x10ffff) {
+                                return new LexerError(
+                                    'Out of range unicode escape sequence',
+                                    null,
+                                    start,
+                                    this.index()
+                                );
+                            }
+                            string += String.fromCharCode(number);
+                            this.eat(hex.length + 1);
+                        } else {
+                            const hex = this.text.slice(0, 4);
+                            if (!/^[0-9A-F]{4}$/.test(hex)) {
+                                return new LexerError(
+                                    'Invalid or lowercase unicode escape sequence',
+                                    null,
+                                    start,
+                                    this.index()
+                                );
+                            }
+                            this.eat(4);
+                            const number = parseInt(hex, 16);
+                            string += String.fromCharCode(number);
+                        }
+                    } else string += escape;
+                } else {
+                    string += char;
+                    if (char === string[0]) {
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+            if (!closed) {
+                return new LexerError(
+                    'Unterminated string literal',
+                    null,
+                    start,
+                    this.index()
+                );
+            }
+            return {
+                type: TokenType.StringLiteral,
+                text: string.slice(1, -1),
+                start: start,
+                stop: this.index(),
+            };
+        } else if (
+            (match =
+                operatorEntries.find((entry) =>
+                    this.text.startsWith(entry[0])
+                ) ?? null)
+        ) {
+            this.eat(match[0].length);
+            return {
+                type: match[1],
+                text: match[0],
+                start: start,
+                stop: this.index(),
+            };
+        }
+        return new LexerError(
+            `Unexpected character`,
+            this.text[0],
+            start,
+            this.index() + 1
+        );
+    }
 
-		let match;
-		if ((match = text.match(/^[\r\n\f\v\t ]/)) !== null) {
-			text = text.slice(match[0].length);
-		} else if ((match = text.match(/^\/\/.*/)) !== null) {
-			text = text.slice(match[0].length);
-		} else if ((match = text.match(/^\/\*[^]*?\*\//)) !== null) {
-			text = text.slice(match[0].length);
-		} else if ((match = text.match(/^[a-zA-Z](?:_?[a-zA-Z0-9]+)*/)) !== null) {
-			let type;
-			switch (match[0]) {
-				case 'and':
-					type = TokenType.AndKeyword;
-					break;
-				case 'or':
-					type = TokenType.OrKeyword;
-					break;
-				case 'not':
-					type = TokenType.NotKeyword;
-					break;
-				case 'for':
-					type = TokenType.ForKeyword;
-					break;
-				case 'while':
-					type = TokenType.WhileKeyword;
-					break;
-				case 'continue':
-					type = TokenType.ContinueKeyword;
-					break;
-				case 'break':
-					type = TokenType.BreakKeyword;
-					break;
-				case 'return':
-					type = TokenType.ReturnKeyword;
-					break;
-				case 'macro':
-					type = TokenType.MacroKeyword;
-					break;
-				case 'public':
-					type = TokenType.PublicKeyword;
-					break;
-				case 'private':
-					type = TokenType.PrivateKeyword;
-					break;
-				case 'protected':
-					type = TokenType.ProtectedKeyword;
-					break;
-				case 'do':
-					type = TokenType.DoKeyword;
-					break;
-				case 'is':
-					type = TokenType.IsKeyword;
-					break;
-				case 'as':
-					type = TokenType.AsKeyword;
-					break;
-				case 'if':
-					type = TokenType.IfKeyword;
-					break;
-				case 'else':
-					type = TokenType.ElseKeyword;
-					break;
-				case 'try':
-					type = TokenType.TryKeyword;
-					break;
-				case 'catch':
-					type = TokenType.CatchKeyword;
-					break;
-				case 'throw':
-					type = TokenType.ThrowKeyword;
-					break;
-				case 'def':
-					type = TokenType.DefKeyword;
-					break;
-				case 'val':
-					type = TokenType.ValKeyword;
-					break;
-				case 'var':
-					type = TokenType.VarKeyword;
-					break;
-				case 'in':
-					type = TokenType.InKeyword;
-					break;
-				case 'match':
-					type = TokenType.MatchKeyword;
-					break;
-				case 'from':
-					type = TokenType.FromKeyword;
-					break;
-				case 'import':
-					type = TokenType.ImportKeyword;
-					break;
-				case 'export':
-					type = TokenType.ExportKeyword;
-					break;
-				case 'type':
-					type = TokenType.TypeKeyword;
-					break;
-				case 'enum':
-					type = TokenType.EnumKeyword;
-					break;
-				case 'struct':
-					type = TokenType.StructKeyword;
-					break;
-				case 'class':
-					type = TokenType.ClassKeyword;
-					break;
-				case 'void':
-					type = TokenType.VoidType;
-					break;
-				case 'int':
-				case 'i8':
-				case 'i16':
-				case 'i32':
-				case 'i64':
-					type = TokenType.IntegerType;
-					break;
-				case 'uint':
-				case 'u8':
-				case 'u16':
-				case 'u32':
-				case 'u64':
-					type = TokenType.UnsignedIntegerType;
-					break;
-				case 'float':
-				case 'f32':
-				case 'f64':
-					type = TokenType.FloatType;
-					break;
-				case 'bool':
-					type = TokenType.BooleanType;
-					break;
-				case 'string':
-					type = TokenType.StringType;
-					break;
-				case 'true':
-				case 'false':
-					type = TokenType.BoolLiteral;
-					break;
-				case 'super':
-					type = TokenType.SuperKeyword;
-					break;
-				case 'this':
-					type = TokenType.ThisKeyword;
-					break;
-				case 'null':
-					type = TokenType.NullKeyword;
-					break;
-				default:
-					type = TokenType.Identifier;
-					break;
-			}
-			text = text.slice(match[0].length);
-			makeToken({
-				type,
-				text: match[0]
-			});
-		} else if ((match = text.match(/^0[xX][0-9a-fA-F]+/)) !== null) {
-			text = text.slice(match[0].length);
-			makeToken({
-				type: TokenType.HexadecimalLiteral,
-				text: match[0]
-			});
-		} else if ((match = text.match(/^0[oO][0-7]+/)) !== null) {
-			text = text.slice(match[0].length);
-			makeToken({
-				type: TokenType.OctalLiteral,
-				text: match[0]
-			});
-		} else if ((match = text.match(/^0[bB][0-1]+/)) !== null) {
-			text = text.slice(match[0].length);
-			makeToken({
-				type: TokenType.BinaryLiteral,
-				text: match[0]
-			});
-		} else if ((match = text.match(/^[0-9]+\.[0-9]+(?:[eE][+\-]?[0-9]+)?/)) !== null) {
-			text = text.slice(match[0].length);
-			makeToken({
-				type: TokenType.FloatLiteral,
-				text: match[0]
-			});
-		} else if ((match = text.match(/^[0-9]+(?:[eE][+\-]?[0-9]+)?/)) !== null) {
-			text = text.slice(match[0].length);
-			makeToken({
-				type: TokenType.IntLiteral,
-				text: match[0]
-			});
-		} else if (/^['"]/.test(text[0])) {
-			let string = text[0];
-			text = text.slice(1);
-			let closed = false;
-			while (text.length > 0) {
-				const char = text[0];
-				text = text.slice(1);
-				if (char === '\\') {
-					const escape = text[0];
-					if (escape === undefined) makeError({ message: 'Unexpected end of escape' });
-					text = text.slice(1);
-					if (escape === 'n') string += '\n';
-					else if (escape === 'r') string += '\r';
-					else if (escape === 'n') string += '\n';
-					else if (escape === 'f') string += '\f';
-					else if (escape === 'v') string += '\v';
-					else if (escape === 't') string += '\t';
-					else if (escape === 'b') string += '\b';
-					else if (escape === '0') string += '\0';
-					else if (escape === 'x') {
-						const hex = text.slice(0, 2);
-						if (!/^[0-9A-F]{2}$/.test(hex)) makeError({ message: 'Invalid or lowercase hexadecimal escape sequence' });
-						text = text.slice(2);
-						const number = parseInt(hex, 16);
-						string += String.fromCharCode(number);
-					} else if (escape === 'u') {
-						const next = text[0];
-						if (next === '{') {
-							text = text.slice(1);
-							let hex = '';
-							for (let i = 0; i < text.length; i++) {
-								hex += text[i];
-								if (text[i] === '}') break;
-							}
-							if (!hex.endsWith('}')) makeError({ message: 'Invalid or lowercase unicode escape sequence' });
-							hex = hex.slice(0, -1);
-							const number = parseInt(hex, 16);
-							if (number > 0x10FFFF) makeError({ message: 'Out of range unicode escape sequence' });
-							string += String.fromCharCode(number);
-							text = text.slice(hex.length + 1);
-						} else {
-							const hex = text.slice(0, 4);
-							if (!/^[0-9A-F]{4}$/.test(hex)) makeError({ message: 'Invalid or lowercase unicode escape sequence' });
-							text = text.slice(4);
-							const number = parseInt(hex, 16);
-							string += String.fromCharCode(number);
-						}
-					}
-					else string += escape;
-				} else {
-					string += char;
-					if (char === string[0]) {
-						closed = true;
-						break;
-					}
-				}
-			}
-			if (!closed) makeError({ message: 'Unexpected end of string literal' });
-			makeToken({
-				type: TokenType.StringLiteral,
-				text: string.slice(1, -1)
-			});
-		} else if ((match = operators.find(item => text.startsWith(item[0]))) !== undefined) {
-			makeToken({
-				type: match[1],
-				text: match[0]
-			});
-			text = text.slice(match[0].length);
-		} else makeError({ message: (char: string) => `Unexpected character ${util.inspect(char)}` });
-	}
-
-	return tokens;
-
+    private eat(chars: number) {
+        this.text = this.text.slice(chars);
+    }
 }
