@@ -83,7 +83,7 @@ These types are a part of the language and are always available. Although they a
 -   `i8` 8 bit integer. Ranges from `-128` to `127`.
 -   `i16` 16 bit integer. Ranges from `-32768` to `32767`.
 -   `i32` 32 bit integer. Ranges from `-2147483648` to `2147483647`.
--   `i64` 64 bit integer. Ranges from `9223372036854775808` to `9223372036854775807`.
+-   `i64` 64 bit integer. Ranges from `-9223372036854775808` to `9223372036854775807`.
 
 ### Other Types
 
