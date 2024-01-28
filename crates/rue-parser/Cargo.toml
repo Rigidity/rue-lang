@@ -1,0 +1,10 @@
+[package]
+name = "rue-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rue-lexer = { path = "../rue-lexer" }
+rue-syntax = { path = "../rue-syntax" }
+rowan = "0.15.15"
+expect-test = "1.4.1"
