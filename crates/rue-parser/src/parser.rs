@@ -39,13 +39,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek_raw(&self) -> SyntaxKind {
-        self.tokens
-            .get(self.pos)
-            .map(|token| token.0)
-            .unwrap_or(SyntaxKind::Eof)
-    }
-
     fn peek(&mut self) -> SyntaxKind {
         self.eat_trivia();
         self.peek_raw()
@@ -54,6 +47,17 @@ impl<'a> Parser<'a> {
     fn bump(&mut self) -> SyntaxKind {
         self.eat_trivia();
         self.consume_token()
+    }
+
+    fn nth_raw(&self, index: usize) -> SyntaxKind {
+        self.tokens
+            .get(self.pos + index)
+            .map(|token| token.0)
+            .unwrap_or_default()
+    }
+
+    fn peek_raw(&self) -> SyntaxKind {
+        self.nth_raw(0)
     }
 
     fn eat_trivia(&mut self) {
