@@ -6,6 +6,7 @@ pub struct Parser<'a> {
     tokens: Vec<(SyntaxKind, &'a str)>,
     pos: usize,
     builder: GreenNodeBuilder<'static>,
+    errors: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -14,6 +15,7 @@ impl<'a> Parser<'a> {
             tokens: tokens.iter().map(convert_token).collect(),
             pos: 0,
             builder: GreenNodeBuilder::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -30,13 +32,35 @@ impl<'a> Parser<'a> {
         self.builder.finish_node();
     }
 
+    pub fn at(&mut self, kind: SyntaxKind) -> bool {
+        // TODO: Composite checks
+        self.peek() == kind
+    }
+
+    pub fn expect(&mut self, kind: SyntaxKind) -> bool {
+        if self.eat(kind) {
+            true
+        } else {
+            self.error(format!("expected {kind:?}"));
+            false
+        }
+    }
+
     pub fn eat(&mut self, kind: SyntaxKind) -> bool {
+        // TODO: Composite checks
         if self.peek() == kind {
             self.bump();
             true
         } else {
             false
         }
+    }
+
+    fn error(&mut self, message: String) {
+        self.errors.push(message);
+        self.start(SyntaxKind::Error);
+        self.bump();
+        self.finish();
     }
 
     fn peek(&mut self) -> SyntaxKind {

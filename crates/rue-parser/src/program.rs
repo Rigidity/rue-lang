@@ -4,7 +4,6 @@ use crate::parser::Parser;
 
 pub fn parse_program(p: &mut Parser) {
     p.start(SyntaxKind::Program);
-    p.eat(SyntaxKind::Ident);
     p.finish();
 }
 
